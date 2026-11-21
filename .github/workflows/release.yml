@@ -1,0 +1,65 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Pack skill archive (.skill)
+        shell: bash
+        run: |
+          set -euo pipefail
+          SKILL_NAME="${GITHUB_REPOSITORY##*/}"
+          OUT="${SKILL_NAME}.skill"
+          zip -r "$OUT" . \
+            -x '.git/*' \
+            -x '.github/*' \
+            -x '.gitignore' \
+            -x '*/__pycache__/*' \
+            -x '*.pyc'
+          echo "packed ${OUT}"
+          ls -lh "$OUT"
+
+      - name: Derive prerelease flag
+        id: meta
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          if [[ "$VERSION" == *-* ]]; then
+            echo "PRERELEASE=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "PRERELEASE=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ steps.meta.outputs.PRERELEASE }}
+          files: ${{ github.event.repository.name }}.skill
+
+      - name: Verify release uniqueness
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          COUNT=$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --paginate --jq "[.[] | select(.tag_name == \"${TAG}\")] | length")
+          echo "release objects for ${TAG}: ${COUNT}"
+          if [ "${COUNT}" != "1" ]; then
+            echo "::error::expected exactly 1 release for ${TAG}, found ${COUNT}"
+            exit 1
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
