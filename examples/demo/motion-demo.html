@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>bs-motion 特效测试</title>
+    <script src="./bs-motion.js"></script>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        padding: 2rem;
+        background: #f7f7fa;
+        color: #222;
+      }
+      .box {
+        margin: 2rem 0;
+        padding: 1rem;
+        border: 1px solid #ddd;
+        background: #fff;
+      }
+      .btn {
+        padding: 0.5rem 1rem;
+        cursor: pointer;
+        background: #2b57c7;
+        color: #fff;
+        border: 0;
+        border-radius: 4px;
+      }
+      .title {
+        font-size: 2rem;
+        font-weight: 700;
+      }
+      #svgline {
+        stroke: #2b57c7;
+        stroke-width: 2;
+        fill: none;
+      }
+      .sw {
+        width: 300px;
+        height: 80px;
+        background: #eef2ff;
+        display: grid;
+        place-items: center;
+        border: 1px solid #ccd;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>bs-motion 特效测试</h1>
+    <div class="box">
+      <h3>1. 弹簧缓动</h3>
+      <div id="spring" class="title" style="opacity: 0">弹簧入场 SPRING</div>
+      <button class="btn" onclick="testSpring()">播放</button>
+    </div>
+    <div class="box">
+      <h3>2. 文本逐字揭示</h3>
+      <div id="split" class="title">逐字揭示效果</div>
+      <button class="btn" onclick="testSplit()">播放</button>
+    </div>
+    <div class="box">
+      <h3>3. SVG 描边生长</h3>
+      <svg width="300" height="80">
+        <path id="svgline" d="M10 40 L100 10 L200 70 L290 30" /></svg
+      ><button class="btn" onclick="testDraw()">播放</button>
+    </div>
+    <div class="box">
+      <h3>4. 平滑切换</h3>
+      <div class="sw" id="swA">页面 A</div>
+      <button class="btn" onclick="testSwitch()">切换</button>
+      <div class="sw" id="swB" style="display: none">页面 B</div>
+    </div>
+    <script>
+      function testSpring() {
+        var el = document.getElementById("spring");
+        el.style.opacity = 0;
+        el.style.transform = "translateY(30px)";
+        BSMotion.to(el, BSMotion.springVars(90, 10));
+        setTimeout(function () {
+          el.style.opacity = 1;
+          el.style.transform = "none";
+        }, 1000);
+      }
+      function testSplit() {
+        var el = document.getElementById("split");
+        var chars = BSMotion.splitText(el, "chars");
+        el.classList.remove("show");
+        chars.forEach(function (c, i) {
+          setTimeout(function () {
+            c.classList.add("show");
+          }, i * 60);
+        });
+      }
+      function testDraw() {
+        BSMotion.drawSVG(document.getElementById("svgline"), 1.4);
+      }
+      function testSwitch() {
+        var a = document.getElementById("swA"),
+          b = document.getElementById("swB");
+        b.style.display = "grid";
+        BSMotion.smoothSwitch(a, b);
+        setTimeout(function () {
+          a.style.display = "none";
+        }, 400);
+      }
+      window.__testReady = true;
+    </script>
+  </body>
+</html>

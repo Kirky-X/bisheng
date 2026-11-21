@@ -1,0 +1,982 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="ink" data-effect="slide">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>毕昇 · HTML 网页 PPT 引擎</title>
+
+    <!-- 字体:Google Fonts CDN,离线时自动落到系统字体栈 -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;600;700;900&family=Noto+Sans+SC:wght@300;400;500;700&family=JetBrains+Mono:wght@400;500&display=swap"
+    />
+    <!-- 自研动效内核:零依赖,离线可用 -->
+    <script src="./bs-motion.js"></script>
+    <!-- 图标:Lucide CDN,禁止用 emoji 当图标 -->
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+
+    <style>
+/* ============================================================
+   BS:TOKENS · 主题变量(4 套预设)
+   页面里只用这些变量,禁止写死 hex;改主题只改 html 的 data-theme
+   响应式架构:html font-size = min(100vw/80, 100vh/45)
+   → 1280×720 时 1rem=16px;任意窗口全尺寸流式缩放,画布满屏无黑边
+   ============================================================ */
+:root{
+  --serif:"Noto Serif SC","Source Han Serif SC","SimSun",serif;
+  --sans:"Noto Sans SC","Microsoft YaHei UI","PingFang SC",sans-serif;
+  --mono:"JetBrains Mono","Cascadia Mono",Consolas,monospace;
+}
+[data-theme="ink"]{ --bg-l:#F7F5F0; --fg-l:#1A1A18; --bg-d:#141412; --fg-d:#F2EFE9; --accent:#B23A17; --accent-on:#FFF8F4; }
+[data-theme="indigo"]{ --bg-l:#F2F3F7; --fg-l:#12141F; --bg-d:#0E1220; --fg-d:#E9EBF5; --accent:#3D5AFE; --accent-on:#FFFFFF; }
+[data-theme="forest"]{ --bg-l:#F1F4EC; --fg-l:#101D14; --bg-d:#0F1D16; --fg-d:#E6EDE3; --accent:#1F7A4A; --accent-on:#F4FFF9; }
+[data-theme="kraft"]{ --bg-l:#F3EBDD; --fg-l:#201910; --bg-d:#221A12; --fg-d:#EFE7D8; --accent:#B4552D; --accent-on:#FFF6EF; }
+
+/* ============================================================
+   舞台 · 满屏流式:slide 100vw×100vh,翻页 = track 平移 100vw/页
+   ============================================================ */
+*{margin:0;padding:0;box-sizing:border-box}
+html{font-size:calc(min(100vw / 80, 100vh / 45));height:100%;background:#0C0C0D}
+body{height:100%;overflow:hidden;background:#0C0C0D}
+.viewport{position:fixed;inset:0}
+.stage{width:100%;height:100%}
+.track{display:flex;height:100%;transform:translateX(0);transition:transform .55s cubic-bezier(.77,0,.175,1)}
+
+/* ============================================================
+   幻灯片 · 满屏;light/dark/accent 三态由 section class 决定
+   ============================================================ */
+.slide{display:flex;flex-direction:column;position:relative;flex:0 0 100vw;width:100vw;height:100vh;padding:4.5rem 5.25rem;overflow:hidden;justify-content:center;
+  background:var(--bg-l);color:var(--fg-l)}
+.slide{--bg:var(--bg-l);--fg:var(--fg-l)}
+.slide.dark{--bg:var(--bg-d);--fg:var(--fg-d)}
+.slide.light{--bg:var(--bg-l);--fg:var(--fg-l)}
+.slide.accent{--bg:var(--accent);--fg:var(--accent-on)}
+.slide{background:var(--bg);color:var(--fg);
+  --muted:color-mix(in srgb,var(--fg) 68%,transparent);
+  --faint:color-mix(in srgb,var(--fg) 34%,transparent);
+  --line:color-mix(in srgb,var(--fg) 14%,transparent);
+  --line-strong:color-mix(in srgb,var(--fg) 32%,transparent);
+  --accent-ink:color-mix(in srgb,var(--accent) 72%,var(--fg));
+  --accent-display:var(--accent)}
+.slide.accent{--accent-ink:var(--fg);--accent-display:var(--fg);--muted:color-mix(in srgb,var(--fg) 92%,transparent)}
+
+/* fade 切换模式(html data-effect="fade"):交叉淡入,不做位移 */
+[data-effect="fade"] .track{display:block;transition:none}
+[data-effect="fade"] .slide{position:absolute;inset:0;flex:none;opacity:0;pointer-events:none;transition:opacity .5s ease}
+[data-effect="fade"] .slide.is-current{opacity:1;pointer-events:auto}
+
+/* color-mix 不可用的旧环境回退:可读性近似色(非精确,仅保底) */
+@supports not (color: color-mix(in srgb, red, blue)){
+  .slide{--muted:#8A8A86;--faint:#A8A8A2;--line:#DDDDD6;--line-strong:#B8B8B0;--accent-ink:var(--accent)}
+  .slide.dark{--muted:#9A9A96;--faint:#7A7A76;--line:#3A3A38;--line-strong:#5A5A58}
+  .slide.accent{--muted:var(--fg)}
+}
+
+/* ============================================================
+   版式骨架(类名唯一来源,页面内只用这些;缺类先补这里)
+   ============================================================ */
+.head{display:flex;flex-direction:column;gap:.875rem;margin-bottom:2.25rem}
+.head-row{display:grid;grid-template-columns:1fr auto;align-items:end;gap:1.5rem}
+.l-center{display:flex;flex-direction:column;justify-content:center;height:100%}
+.l-split{display:grid;grid-template-columns:1fr 1fr;gap:3.5rem;align-items:start;min-height:0}
+.l-split-37{display:grid;grid-template-columns:3fr 7fr;gap:3.5rem;align-items:start;min-height:0}
+.l-split-73{display:grid;grid-template-columns:7fr 3fr;gap:3.5rem;align-items:start;min-height:0}
+.l-split-48{display:grid;grid-template-columns:4fr 8fr;gap:3.5rem;align-items:start;min-height:0}
+.cards{display:grid;gap:1.5rem;align-items:stretch}
+.cards-2{grid-template-columns:1fr 1fr}
+.cards-3{grid-template-columns:1fr 1fr 1fr}
+.cards-4{grid-template-columns:repeat(4,1fr)}
+.card{border:1px solid var(--line);padding:1.625rem 1.75rem;display:flex;flex-direction:column;gap:.75rem}
+.card-fill{background:color-mix(in srgb,var(--fg) 6%,transparent);border:0}
+.card-accent{background:var(--accent);color:var(--accent-on);border:0;--muted:var(--accent-on)}
+.card-accent .t-body{color:var(--accent-on)}
+.card-accent .t-sub{color:var(--accent-on)}
+/* 多图网格(2/3/4 图):同组统一高度/比例;引用见 references/image-layouts.md */
+.img-grid{display:grid;gap:1.5rem;align-items:start;width:100%}
+.img-grid-2{grid-template-columns:1fr 1fr}
+.img-grid-3{grid-template-columns:repeat(3,1fr)}
+.img-grid-4{grid-template-columns:repeat(2,1fr)}
+.accent-outline{outline:2px solid var(--accent);outline-offset:2px}
+.frame-img{overflow:hidden;position:relative;background:color-mix(in srgb,var(--fg) 5%,transparent)}
+.frame-img img{width:100%;height:100%;object-fit:cover;object-position:top;display:block}
+.r-16x9{aspect-ratio:16/9}.r-16x10{aspect-ratio:16/10}.r-4x3{aspect-ratio:4/3}.r-3x2{aspect-ratio:3/2}.r-1x1{aspect-ratio:1/1}
+.stat-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(13.75rem,1fr));gap:2.5rem;align-items:end}
+.timeline{display:flex;flex-direction:column}
+.tl-node{display:grid;grid-template-columns:3.5rem 1fr;gap:1.25rem;position:relative;padding-bottom:2.125rem}
+.tl-dot{width:.75rem;height:.75rem;background:var(--accent);position:relative;top:.3rem}
+.tl-node::before{content:"";position:absolute;left:.34rem;top:1.05rem;bottom:0;width:1px;background:var(--line-strong)}
+.tl-node:last-child::before{display:none}
+.quote-mark{font-family:var(--serif);font-size:6rem;line-height:.6;color:var(--accent);display:block;margin-bottom:.5rem}
+.hr-line{border:0;border-top:1px solid var(--line);margin:1.5rem 0}
+.hr-strong{border:0;border-top:2px solid var(--line-strong);margin:1.5rem 0}
+.foot{position:absolute;left:5.25rem;right:5.25rem;bottom:3.5rem;display:flex;justify-content:space-between;
+  font-family:var(--mono);font-size:.75rem;color:var(--faint);letter-spacing:.04em}
+
+/* ============================================================
+   排版(rem 流式:1280×720 基准 1rem=16px,随窗口等比)
+   ============================================================ */
+.t-kicker{font-family:var(--mono);font-size:.875rem;font-weight:500;letter-spacing:.18em;text-transform:uppercase;color:var(--accent-ink)}
+.t-kicker-dim{color:var(--muted)}
+.t-hero{font-family:var(--serif);font-size:4rem;font-weight:900;line-height:1.15;letter-spacing:.01em}
+.t-title{font-family:var(--serif);font-size:2.5rem;font-weight:700;line-height:1.25}
+.t-sub{font-family:var(--sans);font-size:1.5rem;font-weight:400;line-height:1.5;color:var(--fg)}
+.t-lead{font-family:var(--sans);font-size:1.25rem;font-weight:400;line-height:1.7}
+.t-body{font-family:var(--sans);font-size:1rem;font-weight:400;line-height:1.75;color:color-mix(in srgb,var(--fg) 78%,transparent)}
+.t-note{font-family:var(--sans);font-size:.875rem;line-height:1.6;color:var(--muted)}
+.t-meta{font-family:var(--mono);font-size:.8125rem;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.num-hero{font-family:var(--serif);font-size:7.5rem;font-weight:900;line-height:1;letter-spacing:-.02em}
+.num-big{font-family:var(--serif);font-size:4.5rem;font-weight:900;line-height:1}
+.accent-text{color:var(--accent-display)}
+.accent-ink-text{color:var(--accent-ink)}
+.nowrap{white-space:nowrap}
+.body-fill{display:flex;flex-direction:column;justify-content:center;min-height:0}
+
+/* ============================================================
+   动效 · data-anim 初始态(仅引擎确认动效内核可用时启用)
+   ============================================================ */
+/* bs-motion 新增特效样式 */
+.bs-split-char,.bs-split-line{opacity:0;transform:translateY(0.35em);transition:opacity .5s ease,transform .5s ease}
+.bs-split.show .bs-split-char,.bs-split.show .bs-split-line{opacity:1;transform:translateY(0)}
+.bs-switch-in{animation:bsIn .6s cubic-bezier(.22,1,.36,1) both}
+.bs-switch-out{animation:bsOut .6s cubic-bezier(.22,1,.36,1) both}
+@keyframes bsIn{from{opacity:0;transform:scale(.985) translateY(8px)}to{opacity:1;transform:none}}
+@keyframes bsOut{from{opacity:1;transform:none}to{opacity:.35;transform:scale(1.01)}}
+@media (prefers-reduced-motion:reduce){.bs-switch-in,.bs-switch-out{animation:none}}
+.anim-on [data-anim]{opacity:0}
+.overview [data-anim],.notes-open [data-anim]{opacity:1 !important;transform:none !important}
+
+/* ============================================================
+   Chrome(窗口级 UI,固定 px,不随 rem 缩放)
+   ============================================================ */
+.chrome{position:fixed;left:0;right:0;bottom:0;height:40px;display:flex;align-items:center;
+  justify-content:space-between;padding:0 16px;font-family:var(--mono);font-size:12px;color:#9A9A93;
+  background:rgba(12,12,13,.86);z-index:50;user-select:none}
+.chrome .progress{position:fixed;left:0;top:-2px;height:2px;background:var(--accent,#B23A17);transition:width .3s ease}
+.hint{font-size:11px;letter-spacing:.02em;color:#6E6E68}
+.hint b{color:#9A9A93;font-weight:500}
+.counter{letter-spacing:.08em}
+      .auto-on .counter::after{content:\" · A\";color:#E8A87C;font-weight:700}
+.sr-live{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+
+/* ============================================================
+   总览(Esc)· 缩略宫格:22vw×22vh 自适应网格,.viewport 滚动
+   ============================================================ */
+.overview .viewport{overflow:auto}
+.overview .stage{width:100%;height:auto}
+.overview .track{display:flex;flex-wrap:wrap;gap:20px;align-content:flex-start;justify-content:flex-start;
+  width:100%;transform:none !important;transition:none;padding:32px 32px 48px}
+.overview .slide{position:relative;opacity:1 !important;pointer-events:auto;transform:scale(.22);transform-origin:top left;flex:none;cursor:pointer;
+  margin:0 calc(-78vw) calc(-78vh) 0;outline:3px solid transparent;outline-offset:-3px;padding:2.5rem 2.875rem 2.875rem}
+.overview .slide:hover{outline-color:#4A4A46}
+.overview .slide.is-current{outline-color:var(--accent,#B23A17)}
+.overview .foot{display:none}
+.ov-num{display:none}
+.overview .ov-num{display:block;position:absolute;top:8px;left:10px;font-family:var(--mono);font-size:44px;color:var(--faint)}
+
+/* ============================================================
+   演讲备注(P)· 右侧抽屉
+   ============================================================ */
+.notes-panel{position:fixed;top:0;right:-460px;width:440px;bottom:40px;background:#161614;color:#E8E6DF;
+  z-index:60;transition:right .3s ease;padding:32px;overflow:auto;font-family:var(--sans)}
+.notes-open .notes-panel{right:0}
+.notes-panel h3{font-family:var(--mono);font-size:12px;letter-spacing:.15em;text-transform:uppercase;color:#8F8D85;margin-bottom:16px}
+.notes-panel .n-title{font-family:var(--serif);font-size:22px;font-weight:700;margin-bottom:12px}
+.notes-panel .n-block{margin-bottom:16px}
+.notes-panel .n-label{font-family:var(--mono);font-size:11px;color:#8F8D85;text-transform:uppercase;letter-spacing:.12em;margin-bottom:4px}
+.notes-panel .n-text{font-size:15px;line-height:1.7;color:#D8D6CE}
+.notes-panel .n-empty{color:#6E6E68;font-size:14px}
+
+/* ============================================================
+   打印 · 导出 PDF:浏览器打印 → 横向、无边距、勾选"背景图形"
+   ============================================================ */
+@media print{
+  html{font-size:16px}
+  html,body{overflow:visible;background:#fff}
+  .chrome,.notes-panel,.hint,.ov-num{display:none !important}
+  .viewport{position:static}
+  .stage{width:auto;height:auto}
+  .track{display:block;transform:none !important;transition:none}
+  .slide{position:relative;opacity:1 !important;pointer-events:auto;width:100%;height:100vh;max-height:100vh;page-break-after:always;break-after:page}
+  [data-anim]{opacity:1 !important;transform:none !important}
+}
+@page{size:1280px 720px;margin:0}
+
+/* ============================================================
+   窄屏降级(≤760px):栏式改单列堆叠,rem 基准放大
+   ============================================================ */
+@media (max-width: 760px){
+  html{font-size:calc(min(100vw / 40, 100vh / 30))}
+  .slide{padding:2.5rem 1.5rem 3.5rem}
+  .l-split,.l-split-37,.l-split-73,.l-split-48{grid-template-columns:1fr;height:auto;gap:1.5rem}
+  .cards-3,.cards-4{grid-template-columns:1fr 1fr}
+  .cards-2{grid-template-columns:1fr}
+  .foot{position:static;margin-top:1.5rem}
+}
+
+/* 减少动效偏好 */
+@media (prefers-reduced-motion: reduce){
+  .track{transition:none}
+  [data-effect="fade"] .slide{transition:none}
+}
+</style>
+
+  </head>
+  <body>
+    <main class="viewport">
+      <div class="stage">
+        <div class="track">
+    
+      <section class="slide dark hero" data-slide-id="cover" data-layout="L1">
+        <div class="l-center" style="gap:20px">
+          <span class="t-kicker" data-anim>HTML DECK · 2026.11</span>
+          <h1 class="t-hero" data-anim>毕昇<br>网页 PPT 引擎</h1>
+          <p class="t-sub t-kicker-dim" data-anim>活字排版 · 一页一版</p>
+        </div>
+        <div class="foot"><span>bisheng skill</span><span>v0.1</span></div>
+      </section>
+
+      <section class="slide light" data-slide-id="stats" data-layout="L3">
+        <div class="head">
+          <span class="t-kicker" data-anim>BY THE NUMBERS</span>
+          <h2 class="t-title" data-anim>三个事实</h2>
+        </div>
+        <div class="body-fill">
+          <div class="stat-row">
+          <div data-anim><div class="num-hero accent-text" data-count="1280">0</div><p class="t-note">固定设计画布宽度 px,等比缩放不变形</p></div>
+          <div data-anim><div class="num-hero" data-count="10">0</div><p class="t-note">版式骨架,覆盖叙事弧全角色</p></div>
+          <div data-anim><div class="num-hero" data-count="4">0</div><p class="t-note">主题预设,页面零硬编码颜色</p></div>
+        </div>
+          </div>
+        <div class="foot"><span>毕昇</span><span>02 / 07</span></div>
+      </section>
+
+      <section class="slide light" data-slide-id="compare" data-layout="L7" data-animate="directional">
+        <div class="head">
+          <span class="t-kicker" data-anim>BEFORE / AFTER</span>
+          <h2 class="t-title" data-anim>为什么换载体</h2>
+        </div>
+        <div class="body-fill">
+          <div class="l-split" style="height:auto">
+          <div class="card" data-anim="left">
+            <span class="t-meta">传统 PPT</span>
+            <p class="t-body">固定分辨率,投影发虚;特效是套壳动画;文件传来传去,版本失控。</p>
+          </div>
+          <div class="card card-accent" data-anim="right">
+            <span class="t-meta">HTML DECK</span>
+            <p class="t-body">矢量等比,任意屏清晰;时间轴动效;一个 URL 即分享,即放映。</p>
+          </div>
+        </div>
+          </div>
+        <div class="foot"><span>毕昇</span><span>03 / 07</span></div>
+      </section>
+
+      <section class="slide dark hero" data-slide-id="quote" data-layout="L8" data-animate="quote">
+        <div class="l-center" style="gap:24px">
+          <span class="quote-mark" data-anim>“</span>
+          <p class="t-hero" style="font-size:44px;font-weight:700" data-anim="line">工具的形态,</p>
+          <p class="t-hero" style="font-size:44px;font-weight:700" data-anim="line">决定表达的边界。</p>
+          <span class="t-meta" data-anim="line">— 本 deck 的立场</span>
+        </div>
+      </section>
+
+      <section class="slide light" data-slide-id="flow" data-layout="L6" data-animate="pipeline">
+        <div class="head">
+          <span class="t-kicker" data-anim>WORKFLOW</span>
+          <h2 class="t-title" data-anim>从大纲到放映</h2>
+        </div>
+        <div class="body-fill">
+          <div class="cards-3" style="display:grid;gap:24px;margin-top:8px">
+          <div class="card card-fill" data-anim="step"><span class="t-meta">STEP 01</span><h3 class="t-sub" style="font-weight:700">定结构</h3><p class="t-body">叙事弧 + 结构先行,结构错了返修最贵。</p></div>
+          <div class="card card-fill" data-anim="step"><span class="t-meta">STEP 02</span><h3 class="t-sub" style="font-weight:700">填版式</h3><p class="t-body">L1-L10 骨架粘贴改文案,类名零发明。</p></div>
+          <div class="card card-accent" data-anim="step"><span class="t-meta">STEP 03</span><h3 class="t-sub" style="font-weight:700">过门禁</h3><p class="t-body">结构校验 + 浏览器实测 + 设计评审。</p></div>
+        </div>
+          </div>
+        <div class="foot"><span>毕昇</span><span>05 / 07</span></div>
+      </section>
+
+      <section class="slide light" data-slide-id="timeline" data-layout="L9">
+        <div class="head">
+          <span class="t-kicker" data-anim>TIMELINE</span>
+          <h2 class="t-title" data-anim>三代演示载体</h2>
+        </div>
+        <div class="body-fill">
+          <div class="timeline" style="margin-top:8px">
+          <div class="tl-node" data-anim><span class="tl-dot"></span><div><h3 class="t-sub" style="font-weight:700">1990s · 幻灯片软件</h3><p class="t-body">页面即位图,特效靠模板库,适配靠运气。</p></div></div>
+          <div class="tl-node" data-anim><span class="tl-dot"></span><div><h3 class="t-sub" style="font-weight:700">2010s · 云文档 slides</h3><p class="t-body">协作上了云,表现力仍在模板里打转。</p></div></div>
+          <div class="tl-node" data-anim><span class="tl-dot"></span><div><h3 class="t-sub" style="font-weight:700">2020s · HTML deck</h3><p class="t-body">Web 全部能力入场:矢量、动效、交互、数据直连。</p></div></div>
+        </div>
+          </div>
+        <div class="foot"><span>毕昇</span><span>06 / 07</span></div>
+      </section>
+
+      <section class="slide dark" data-slide-id="gallery" data-layout="L5" data-image-layout="L-IMG-4">
+        <div class="head"><span class="t-kicker" data-anim>GALLERY · 多图布局</span><h2 class="t-title" data-anim>四图 2×2：同组统一比例与高度</h2></div>
+        <div class="body-fill">
+          <div class="img-grid img-grid-4">
+            <figure class="frame-img" style="height:22vh" data-anim><img src="images/gallery-a.png" alt="技术壁垒图"></figure>
+            <figure class="frame-img" style="height:22vh" data-anim><img src="images/gallery-b.png" alt="市场数据"></figure>
+            <figure class="frame-img" style="height:22vh" data-anim><img src="images/gallery-c.png" alt="竞争格局"></figure>
+            <figure class="frame-img" style="height:22vh" data-anim><img src="images/gallery-d.png" alt="发展规划"></figure>
+          </div>
+          <p class="t-note" style="margin-top:1rem" data-anim>同组统一 16:9 / 同高 / 图注同密度 · 示例素材</p>
+        </div>
+      </section>
+
+      <section class="slide dark hero" data-slide-id="closing" data-layout="L10">
+        <div class="l-center" style="gap:20px">
+          <h2 class="t-hero" data-anim>开始排你的<br>第一页</h2>
+          <p class="t-lead t-kicker-dim" data-anim>单击 / 方向键翻页 · Esc 总览 · P 备注 · 打印即 PDF</p>
+          <span class="t-meta" data-anim>Q &amp; A</span>
+        </div>
+      </section>
+        </div>
+      </div>
+    </main>
+
+    <div class="chrome">
+      <div class="progress"></div>
+      <span class="hint"
+        ><b>←→↑↓</b> 翻页 · <b>单击</b> 下一页 · <b>Esc</b> 总览 · <b>F</b> 全屏
+        · <b>P</b> 备注 · <b>B</b> 关动画 · <b>A</b> 自动</span
+      >
+      <span class="counter" aria-live="polite" aria-atomic="true"></span>
+          <span class="sr-live" aria-live="polite" aria-atomic="true"></span>
+    </div>
+
+    <script>
+window.__SPEAKER_NOTES__ = [
+  { id:"cover", title:"开场", purpose:"让观众知道这是一套网页 PPT,不是网页", talk:"自报家门:毕昇取自活字印刷,核心主张是'排版即复用'。停两秒再翻页。", transition:"先给三个数字建立信任,再讲为什么", minutes:"1" },
+  { id:"stats", title:"三个事实", purpose:"用硬数据定调引擎能力", talk:"1280×720 是设计画布,不是屏幕要求;任何窗口都等比缩放。10 个版式 4 套主题都内置。", transition:"数字是能力,痛点是动机——看对比", minutes:"2" },
+  { id:"compare", title:"为什么换载体", purpose:"建立'传统 PPT 的天花板'共识", talk:"左侧念痛点时放慢;右侧强调'一个 URL 即分享',这是真实演示场景最强的差异点。", transition:"差异背后是立场,给出金句", minutes:"2" },
+  { id:"quote", title:"金句页", purpose:"节奏呼吸,制造记忆点", talk:"逐行出现,念完停住不解释。金句页不承载信息量。", transition:"从立场回到方法", minutes:"1" },
+  { id:"flow", title:"工作流", purpose:"让观众知道做一份 deck 只有三步", talk:"逐步点亮;强调'结构错了返修最贵',所以三表先行。", transition:"三步之外,再看载体演化的大图景", minutes:"2" },
+  { id:"timeline", title:"三代载体", purpose:"把 bisheng 放进历史脉络,强化'新范式'叙事", talk:"三代各自的天花板;2020s 的关键是 Web 能力全部入场。", transition:"收束给行动指令", minutes:"2" },
+  { id:"closing", title:"收束", purpose:"给行动:回去排第一页", talk:"念键位速查;提醒打印导出 PDF 的方法。留 Q&A。", transition:"结束", minutes:"1" }
+];
+</script>
+
+<aside class="notes-panel" aria-label="演讲备注">
+      <h3>Speaker Notes · <span class="n-page"></span></h3>
+      <div class="n-title"></div>
+      <div class="n-body"></div>
+    </aside>
+
+    <script>
+      /* ============================================================
+   bisheng 引擎 · 传统 PPT 翻页逻辑
+   - 满屏分页:流式响应式,slide 100vw×100vh,任意窗口满屏无黑边
+   - 单击 / → ↓ Space PageDown 下一页;← ↑ PageUp 上一页;Home End 首尾;1-9 跳页
+   - Esc 总览 · F 全屏 · P 备注 · B 低功耗
+   ============================================================ */
+      (function () {
+        "use strict";
+                function $(s, r) {
+          return (r || document).querySelector(s);
+        }
+        function $$(s, r) {
+          return Array.prototype.slice.call(
+            (r || document).querySelectorAll(s),
+          );
+        }
+        var stage = $(".stage"),
+          track = $(".track"),
+          counter = $(".counter"),
+          progress = $(".progress");
+        var slides = $$(".slide");
+        if (!slides.length) {
+          console.error("bisheng: 0 张 slide,请填充 <!-- SLIDES_HERE -->");
+          return;
+        }
+
+        /* ---------- 状态 ---------- */
+        var cur = -1,
+          tl = null,
+          lowPower = false;
+        var reducedMQ = window.matchMedia("(prefers-reduced-motion: reduce)");
+        var animOK = !!window.BSMotion && !reducedMQ.matches;
+        if (animOK) {
+          document.documentElement.classList.add("anim-on");
+          BSMotion.defaults({ ease: "power3.out" });
+        }
+        reducedMQ.addEventListener("change", function () {
+          animOK = !!window.BSMotion && !reducedMQ.matches && !lowPower;
+          document.documentElement.classList.toggle("anim-on", animOK);
+          if (cur >= 0) animOK ? playSlide(cur) : revealFinal(slides[cur]);
+        });
+
+        /* ---------- 数字滚动(data-count) ---------- */
+        function makeCounter(el) {
+          var raw = (
+            el.getAttribute("data-count") !== null
+              ? el.getAttribute("data-count")
+              : el.textContent
+          ).trim();
+          var m = raw.match(/^([\d,]+(?:\.\d+)?)(.*)$/);
+          if (!m) return null;
+          var target = parseFloat(m[1].replace(/,/g, ""));
+          if (isNaN(target)) return null;
+          var decimals = (m[1].split(".")[1] || "").length,
+            grouped = m[1].indexOf(",") >= 0,
+            suffix = m[2] || "";
+          var state = { v: 0 };
+          if (!window.BSMotion) {
+            el.textContent = raw;
+            return null;
+          }
+          return BSMotion.to(state, {
+            v: target,
+            duration: 1.2,
+            ease: "power2.out",
+            onUpdate: function () {
+              var n = state.v.toFixed(decimals);
+              if (grouped)
+                n = Number(n).toLocaleString("en-US", {
+                  minimumFractionDigits: decimals,
+                  maximumFractionDigits: decimals,
+                });
+              el.textContent = n + suffix;
+            },
+          });
+        }
+
+        /* ---------- 页面入场动效 ---------- */
+        function revealFinal(sec) {
+          if (window.BSMotion)
+            BSMotion.set($$("[data-anim]", sec), {
+              autoAlpha: 1,
+              y: 0,
+              x: 0,
+              scaleY: 1,
+              scaleX: 1,
+              clearProps: "transform",
+            });
+          $$("[data-count]", sec).forEach(function (el) {
+            var raw = el.getAttribute("data-count");
+            if (raw === null) return;
+            if (!window.BSMotion) { el.textContent = raw; return; }
+                        var c = makeCounter(el);
+            if (c) {
+              c.progress(1);
+              c.kill();
+            }
+          });
+        }
+        function playSlide(i) {
+          if (tl) {
+            tl.kill();
+            tl = null;
+          }
+          var sec = slides[i];
+          if (!animOK || lowPower || !window.BSMotion) {
+            revealFinal(sec);
+            return;
+          }
+          var recipe = sec.getAttribute("data-animate") || "";
+          var els = $$("[data-anim]", sec);
+          tl = BSMotion.timeline({
+            defaults: { ease: "power3.out", duration: 0.6 },
+          });
+          if (recipe === "directional") {
+            var L = $$('[data-anim="left"]', sec),
+              R = $$('[data-anim="right"]', sec);
+            var rest = els.filter(function (e) {
+              var a = e.getAttribute("data-anim");
+              return a !== "left" && a !== "right";
+            });
+            if (rest.length)
+              tl.fromTo(
+                rest,
+                { autoAlpha: 0, y: 26 },
+                { autoAlpha: 1, y: 0, stagger: 0.06 },
+                0.05,
+              );
+            if (L.length)
+              tl.fromTo(
+                L,
+                { autoAlpha: 0, x: -56 },
+                { autoAlpha: 1, x: 0, stagger: 0.1, duration: 0.7 },
+                0.15,
+              );
+            if (R.length)
+              tl.fromTo(
+                R,
+                { autoAlpha: 0, x: 56 },
+                { autoAlpha: 1, x: 0, stagger: 0.1, duration: 0.7 },
+                0.15,
+              );
+          } else if (recipe === "quote") {
+            var lines = $$('[data-anim="line"]', sec);
+            var rest2 = els.filter(function (e) {
+              return e.getAttribute("data-anim") !== "line";
+            });
+            if (rest2.length)
+              tl.fromTo(
+                rest2,
+                { autoAlpha: 0, y: 20 },
+                { autoAlpha: 1, y: 0, stagger: 0.06 },
+                0.05,
+              );
+            if (lines.length)
+              tl.fromTo(
+                lines,
+                { autoAlpha: 0, y: 44 },
+                {
+                  autoAlpha: 1,
+                  y: 0,
+                  stagger: 0.14,
+                  duration: 0.8,
+                  ease: "power2.out",
+                },
+                0.2,
+              );
+          } else if (recipe === "pipeline") {
+            var steps = $$('[data-anim="step"]', sec);
+            var rest3 = els.filter(function (e) {
+              return e.getAttribute("data-anim") !== "step";
+            });
+            if (rest3.length)
+              tl.fromTo(
+                rest3,
+                { autoAlpha: 0, y: 20 },
+                { autoAlpha: 1, y: 0, stagger: 0.06 },
+                0.05,
+              );
+            if (steps.length)
+              tl.fromTo(
+                steps,
+                { autoAlpha: 0, y: 36 },
+                { autoAlpha: 1, y: 0, stagger: 0.16, duration: 0.55 },
+                0.2,
+              );
+          } else if (recipe === "bars") {
+            var bars = $$('[data-anim="bar"]', sec);
+            var rest4 = els.filter(function (e) {
+              return e.getAttribute("data-anim") !== "bar";
+            });
+            if (rest4.length)
+              tl.fromTo(
+                rest4,
+                { autoAlpha: 0, y: 20 },
+                { autoAlpha: 1, y: 0, stagger: 0.06 },
+                0.05,
+              );
+            if (bars.length)
+              tl.fromTo(
+                bars,
+                { autoAlpha: 0, scaleY: 0, transformOrigin: "bottom" },
+                {
+                  autoAlpha: 1,
+                  scaleY: 1,
+                  stagger: 0.09,
+                  duration: 0.7,
+                  ease: "power2.out",
+                },
+                0.2,
+              );
+          } else {
+            if (els.length)
+              tl.fromTo(
+                els,
+                { autoAlpha: 0, y: 26 },
+                { autoAlpha: 1, y: 0, stagger: 0.08 },
+                0.05,
+              );
+          }
+          $$("[data-count]", sec).forEach(function (el, idx) {
+            var c = makeCounter(el);
+            if (!c) return;
+            tl.add(c, 0.5 + idx * 0.15);
+          });
+        }
+
+        /* ---------- 双屏镜像(BroadcastChannel + storage 兜底:同文件两窗口自动同步翻页) ---------- */
+        var bc = null, myId = Math.random().toString(36).slice(2);
+        try {
+          if ("BroadcastChannel" in window) bc = new BroadcastChannel("bisheng:" + location.pathname);
+        } catch (e) { bc = null; }
+        function bcast(msg) {
+          try { if (bc) bc.postMessage(Object.assign({ from: myId }, msg)); } catch (e) {}
+          try { localStorage.setItem("bisheng-sync", JSON.stringify(Object.assign({ from: myId, t: Date.now() }, msg))); } catch (e) {}
+        }
+        function onPeer(d) {
+          if (!d || d.from === myId) return;
+          if ((d.type === "go" || d.type === "state") && typeof d.n === "number" && d.n !== cur) go(d.n);
+          if (d.type === "hello") bcast({ type: "state", n: cur });
+        }
+        try {
+          if (bc) {
+            bc.onmessage = function (e) { onPeer(e.data); };
+            bc.postMessage({ type: "hello", from: myId });
+          }
+        } catch (e) {}
+        window.addEventListener("storage", function (e) {
+          if (e.key !== "bisheng-sync" || !e.newValue) return;
+          try { onPeer(JSON.parse(e.newValue)); } catch (err) {}
+        });
+
+        /* ---------- 自动放映(A 键:按备注 minutes 定时翻页,无备注默认 30s,尾页自动停) ---------- */
+        var autoOn = false, autoTimer = null;
+        function autoDelay(i) {
+          var id = slides[i].getAttribute("data-slide-id") || "", note = null;
+          for (var j = 0; j < NOTES.length; j++) { if (NOTES[j].id === id) { note = NOTES[j]; break; } }
+          var min = note && note.minutes ? parseFloat(note.minutes) : NaN;
+          return (isNaN(min) || min <= 0) ? 30000 : Math.max(5000, min * 60000);
+        }
+        function scheduleAuto() {
+          if (autoTimer) clearTimeout(autoTimer);
+          if (!autoOn) return;
+          autoTimer = setTimeout(function () { if (cur < slides.length - 1) next(); else toggleAuto(); }, autoDelay(cur));
+        }
+        function toggleAuto() {
+          autoOn = !autoOn;
+          document.body.classList.toggle("auto-on", autoOn);
+          if (autoOn) scheduleAuto();
+          else if (autoTimer) { clearTimeout(autoTimer); autoTimer = null; }
+        }
+
+        /* ---------- 翻页 ---------- */
+        function go(n) {
+          n = Math.max(0, Math.min(slides.length - 1, n));
+          if (n === cur) return;
+          cur = n;
+          var _old = document.querySelector(".slide.is-current");
+          if (_old && _old !== slides[n] && !document.body.classList.contains("overview"))
+            BSMotion.smoothSwitch(_old, slides[n]);
+          track.style.transform =
+            document.documentElement.getAttribute("data-effect") === "fade"
+              ? "translateX(0)"
+              : "translateX(-" + n * 100 + "vw)";
+          slides.forEach(function (s, idx) {
+            s.classList.toggle("is-current", idx === n);
+          });
+          if (!document.body.classList.contains("overview")) {
+            slides.forEach(function (s, idx) {
+              s.setAttribute("aria-hidden", idx === n ? "false" : "true");
+            });
+          }
+          counter.textContent =
+            String(n + 1).padStart(2, "0") +
+            " / " +
+            String(slides.length).padStart(2, "0");
+          var sr = document.querySelector(".sr-live");
+          if (sr) sr.textContent = "第 " + (n + 1) + " 页，共 " + slides.length + " 页";
+          progress.style.width = ((n + 1) / slides.length) * 100 + "%";
+          history.replaceState(null, "", "#" + (n + 1));
+          bcast({ type: "go", n: n });
+          playSlide(n);
+          renderNotes(n);
+        }
+
+        /* ---------- 演讲备注(SPEAKER_NOTES · 按 data-slide-id 匹配) ---------- */
+        var NOTES = window.__SPEAKER_NOTES__ || [];
+        var panel = $(".notes-panel");
+        function renderNotes(i) {
+          if (!panel) return;
+          var sec = slides[i],
+            id = sec.getAttribute("data-slide-id") || "";
+          var note = null;
+          for (var j = 0; j < NOTES.length; j++) {
+            if (NOTES[j].id === id) {
+              note = NOTES[j];
+              break;
+            }
+          }
+          var titleEl = $(".n-title", panel),
+            bodyEl = $(".n-body", panel);
+          $(".n-page", panel).textContent = String(i + 1).padStart(2, "0");
+          var h = $("h1,h2,.t-title,.t-hero", sec);
+          if (!note) {
+            titleEl.textContent = h
+              ? h.textContent.trim().slice(0, 40)
+              : "第 " + (i + 1) + " 页";
+            bodyEl.innerHTML =
+              '<p class="n-empty">本页无备注(在 SPEAKER_NOTES 里按 data-slide-id 补一条)。</p>';
+            return;
+          }
+          titleEl.textContent = note.title || "";
+          var html = "";
+          [
+            ["purpose", "目的"],
+            ["talk", "讲述要点"],
+            ["transition", "转场"],
+            ["minutes", "建议时长"],
+          ].forEach(function (pair) {
+            var k = pair[0],
+              label = pair[1];
+            if (note[k] !== undefined && note[k] !== "")
+              html +=
+                '<div class="n-block"><div class="n-label">' +
+                label +
+                '</div><div class="n-text">' +
+                note[k] +
+                "</div></div>";
+          });
+          bodyEl.innerHTML = html || '<p class="n-empty">备注为空。</p>';
+        }
+
+        /* ---------- 总览终态:全部页计数器落终值(未访问页不再显示初始 0) ---------- */
+        function finalizeAllCounters() {
+          slides.forEach(function (sec) {
+            $$("[data-count]", sec).forEach(function (el) {
+              var raw = (el.getAttribute("data-count") !== null ? el.getAttribute("data-count") : el.textContent).trim();
+              var m = raw.match(/^([\d,]+(?:\.\d+)?)(.*)$/);
+              if (!m) return;
+              var target = parseFloat(m[1].replace(/,/g, ""));
+              if (isNaN(target)) return;
+              var decimals = (m[1].split(".")[1] || "").length,
+                grouped = m[1].indexOf(",") >= 0,
+                suffix = m[2] || "";
+              var n = target.toFixed(decimals);
+              if (grouped)
+                n = Number(n).toLocaleString("en-US", {
+                  minimumFractionDigits: decimals,
+                  maximumFractionDigits: decimals,
+                });
+              el.textContent = n + suffix;
+            });
+          });
+        }
+
+        /* ---------- 总览(Esc) ---------- */
+        var overviewOn = false;
+        function toggleOverview(force) {
+          overviewOn = force !== undefined ? force : !overviewOn;
+          document.body.classList.toggle("overview", overviewOn);
+          if (overviewOn) {
+            if (tl) tl.progress(1);
+            finalizeAllCounters();
+            slides.forEach(function (s) {
+              s.setAttribute("aria-hidden", "false");
+            });
+            requestAnimationFrame(function () {
+              slides[cur].scrollIntoView({ block: "center", behavior: "auto" });
+            });
+          } else {
+            go(cur);
+          }
+        }
+        /* 点击缩略图跳页(capture 先于全局 click 处理) */
+        document.addEventListener(
+          "click",
+          function (e) {
+            if (!overviewOn) return;
+            var s = e.target.closest ? e.target.closest(".slide") : null;
+            if (s) {
+              var idx = slides.indexOf(s);
+              if (idx >= 0) {
+                toggleOverview(false);
+            e.stopPropagation();
+                go(idx);
+              }
+            }
+          },
+          true,
+        );
+
+        /* ---------- 输入 ---------- */
+        function next() {
+          go(cur + 1);
+        }
+        function prev() {
+          go(cur - 1);
+        }
+        var INTERACTIVE = "a,button,input,textarea,select,label,[data-ui]";
+        document.addEventListener("click", function (e) {
+          if (overviewOn) return;
+          if (
+            e.target.closest(INTERACTIVE) ||
+            e.target.closest(".notes-panel") ||
+            e.target.closest(".chrome")
+          )
+            return;
+          if (document.body.classList.contains("notes-open")) {
+            toggleNotes(false);
+            return;
+          }
+          if (e.shiftKey) {
+            prev();
+          } else {
+            next();
+          }
+        });
+        document.addEventListener("keydown", function (e) {
+          if (e.metaKey || e.ctrlKey || e.altKey) return;
+          var k = e.key;
+          if (k === "Escape") {
+            if (document.body.classList.contains("notes-open")) {
+              toggleNotes(false);
+            } else {
+              toggleOverview();
+            }
+            e.preventDefault();
+            return;
+          }
+          if (overviewOn) return;
+          if (
+            document.body.classList.contains("notes-open") &&
+            k !== "p" &&
+            k !== "P"
+          )
+            return;
+          switch (k) {
+            case "ArrowRight":
+            case "ArrowDown":
+            case "PageDown":
+            case " ":
+              next();
+              e.preventDefault();
+              break;
+            case "ArrowLeft":
+            case "ArrowUp":
+            case "PageUp":
+              prev();
+              e.preventDefault();
+              break;
+            case "Home":
+              go(0);
+              e.preventDefault();
+              break;
+            case "End":
+              go(slides.length - 1);
+              e.preventDefault();
+              break;
+            case "f":
+            case "F":
+              if (document.fullscreenElement) {
+                document.exitFullscreen();
+              } else {
+                document.documentElement
+                  .requestFullscreen()
+                  .catch(function () {});
+              }
+              break;
+            case "p":
+            case "P":
+              toggleNotes();
+              break;
+            case "b":
+            case "B":
+              toggleLowPower();
+              break;
+            case "a":
+            case "A":
+              toggleAuto();
+              break;
+            default:
+              if (/^[1-9]$/.test(k)) {
+                var n = parseInt(k, 10) - 1;
+                if (n < slides.length) go(n);
+              }
+          }
+        });
+        var wheelLock = 0;
+        document.addEventListener(
+          "wheel",
+          function (e) {
+            if (overviewOn || document.body.classList.contains("notes-open"))
+              return;
+            var now = Date.now();
+            if (now - wheelLock < 500) return;
+            var d =
+              Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+            if (Math.abs(d) < 24) return;
+            wheelLock = now;
+            if (d > 0) {
+              next();
+            } else {
+              prev();
+            }
+          },
+          { passive: true },
+        );
+        var touchX = 0,
+          touchY = 0;
+        document.addEventListener(
+          "touchstart",
+          function (e) {
+            touchX = e.touches[0].clientX;
+            touchY = e.touches[0].clientY;
+          },
+          { passive: true },
+        );
+        document.addEventListener(
+          "touchend",
+          function (e) {
+            if (overviewOn) return;
+            var dx = e.changedTouches[0].clientX - touchX,
+              dy = e.changedTouches[0].clientY - touchY;
+            if (Math.abs(dx) > 48 && Math.abs(dx) > Math.abs(dy)) {
+              if (dx < 0) {
+                next();
+              } else {
+                prev();
+              }
+            }
+          },
+          { passive: true },
+        );
+
+        /* ---------- 页面可见性恢复(投影切换/窗口切回时动画冻结的自愈) ---------- */
+function settleTrack(){
+  track.style.transition='none';
+  track.style.transform=document.documentElement.getAttribute('data-effect')==='fade'
+    ?'translateX(0)':'translateX(-'+(cur*W)+'px)';
+  void track.offsetWidth;
+  track.style.transition='';
+}
+function onVisibleBack(){
+  settleTrack();
+  if(window.BSMotion&&tl&&tl.isActive()){tl.progress(1)}
+  else{playSlide(cur)}
+}
+document.addEventListener('visibilitychange',function(){if(!document.hidden)onVisibleBack()});
+window.addEventListener('focus',onVisibleBack);
+
+/* ---------- 备注 / 低功耗 ---------- */
+        function toggleNotes(force) {
+          var on =
+            force !== undefined
+              ? force
+              : !document.body.classList.contains("notes-open");
+          document.body.classList.toggle("notes-open", on);
+          if (on) renderNotes(cur);
+        }
+        function toggleLowPower() {
+          lowPower = !lowPower;
+          document.body.classList.toggle("low-power", lowPower);
+          document.documentElement.classList.toggle(
+            "anim-on",
+            !lowPower && animOK,
+          );
+          if (lowPower) {
+            if (tl) tl.kill();
+            revealFinal(slides[cur]);
+          } else {
+            playSlide(cur);
+          }
+        }
+
+        /* ---------- 初始化 ---------- */
+        if (window.lucide) {
+          try {
+            lucide.createIcons();
+          } catch (e) {}
+        }
+        slides.forEach(function (s, i) {
+          var b = document.createElement("span");
+          b.className = "ov-num";
+          b.textContent = String(i + 1).padStart(2, "0");
+          s.insertBefore(b, s.firstChild);
+        });
+        window.addEventListener("beforeprint", function () {
+          if (tl) tl.kill();
+          slides.forEach(revealFinal);
+        });
+        var start = parseInt((location.hash || "").slice(1), 10);
+        go(isNaN(start) ? 0 : start - 1);
+      })();
+    </script>
+  </body>
+</html>
